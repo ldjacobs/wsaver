@@ -1,39 +1,38 @@
 """Script for saving and restoring window positions on a Linux desktop"""
-from collections import namedtuple
-from colorama import Fore, init
-from frosch import hook
-from subprocess import call, check_output, Popen
-from pathlib import Path
 import argparse
-from loguru import logger
 import os
 import re
 import sys
+from collections import namedtuple
+from pathlib import Path
+from pprint import pformat
+from subprocess import Popen, call, check_output
 from time import sleep
 from typing import Optional
-from pprint import pformat
 
+from frosch import hook
+from loguru import logger
 
 VERSION = "1.0.0"
 WFILE = Path(os.environ["HOME"], ".windowlist")
 DEBUG = "DEBUG"
 
+
 def get_output(command: str) -> str:
     """Return the output from a shell command."""
     return check_output(["/bin/bash", "-c", command]).decode("utf-8")
+
 
 def goto_workspace(ws_num: int = 0) -> None:
     """Jump to a given workspace.  Some things only seem to work in WS 0."""
     get_output(f"wmctrl -s {ws_num}")
 
-def check_window(w_id):
+
+def check_window(w_id: str) -> bool:
     w_type = get_output(f"xprop -id {w_id}")
-    if " _NET_WM_WINDOW_TYPE_NORMAL" in w_type:
-        return True
-    elif '"xterm"' in w_type:
-        return True
-    else:
-        return False
+    true_types = [" _NET_WM_WINDOW_TYPE_NORMAL", '"xterm"']
+    return any(t in w_type for t in true_types)
+
 
 def get_res() -> tuple:
     """Gets the current resolution from xrandr.  Never called now?"""
@@ -43,45 +42,54 @@ def get_res() -> tuple:
     logger.info(f"{res=}")
     return res
 
+
 def get_vpdata() -> list:
     """Get "workspace correction" (vector?) data from wmctrl.
     Seems to always be [0, 0]?"""
     vp_data = get_output("wmctrl -d").splitlines()
-    curr_vpdata = [int(n) for l in vp_data for n in l.split()[5].split(",") if n != "N/A"]
+    curr_vpdata = [int(n) for v in vp_data for n in v.split()[5].split(",") if n != "N/A"]
     logger.info(f"{curr_vpdata=}")
     return curr_vpdata
 
+
 def pid_name(pid: int) -> str:
     """Return the process name for the given pid."""
-    return check_output(["ps", "-q",  pid, "-o", "comm="]).decode("utf-8").strip()
+    return check_output(["/usr/bin/ps", "-q", pid, "-o", "comm="]).decode("utf-8").strip()
+
 
 def read_windows(opts: argparse.Namespace) -> None:
     """Get the currently-open windows for output to file or STDOUT"""
     lpg = namedtuple("lpg", ["win_id", "desktop_id", "pid", "x", "y", "width", "height", "uname", "title"])
-    w_list = [lpg._make(l.split(maxsplit=8)) for l in get_output("wmctrl -lpG").splitlines()]
-    relevant = [[w[2],[int(n) for n in w[3:7]]] for w in w_list if check_window(w[0]) == True]
-    for i, r in enumerate(relevant):      
+    w_list = [lpg._make(w.split(maxsplit=8)) for w in get_output("wmctrl -lpG").splitlines()]
+    relevant = [[w[2], [int(n) for n in w[3:7]]] for w in w_list if check_window(w.win_id)]
+    logger.warning(f"w_list={pformat(w_list)}")
+    for i, r in enumerate(relevant):
         relevant[i] = pid_name(r[0]) + " " + str((" ").join([str(n) for n in r[1]]))
     if opts.no_file:
-        for l in relevant:
-            print(l)
+        for r in relevant:
+            print(r)
     else:
         with open(WFILE, "wt") as out:
-            for l in relevant:
-                out.write(l + "\n")
+            for r in relevant:
+                out.write(f"{r}\n")
 
-def read_window_ids():
+
+def read_window_ids() -> list:
+    """Get the currently-open windows for comparison to the saved list."""
     lpg = namedtuple("lpg", ["win_id", "desktop_id", "pid", "x", "y", "width", "height", "uname", "title"])
-    w_list = [lpg._make(l.split(maxsplit=8)) for l in get_output("wmctrl -lpG").splitlines()]
+    w_list = [lpg._make(w.split(maxsplit=8)) for w in get_output("wmctrl -lpG").splitlines()]
     logger.warning(f"w_list={pformat(w_list)}")
-    relevant = [[w[2], w[0]] for w in w_list if check_window(w[0]) == True]
+    relevant = [[w.pid, w.win_id] for w in w_list if check_window(w.win_id)]
     logger.warning(f"{relevant=}")
-    for i, r in enumerate(relevant):      
+    # Replace PID with process name in the relevant list.
+    for i, r in enumerate(relevant):
         relevant[i][0] = pid_name(r[0])
     logger.warning(f"{relevant=}")
     return relevant
 
+
 def open_appwindow(app, x, y, w, h):
+    """Open apps from the saved list that are not currently running."""
     ws1 = get_output("wmctrl -lp")
     # fix command for certain apps that open in new tab by default
     if app == "gedit":
@@ -97,8 +105,10 @@ def open_appwindow(app, x, y, w, h):
     Popen(["/bin/bash", "-c", f"{app} {option}"])
     # fix exception for Chrome (command = google-chrome-stable, but processname = chrome)
     app = "chrome" if "chrome" in app else app
-    while t < 30:      
-        ws2 = [w.split()[0:3] for w in get_output("wmctrl -lp").splitlines() if not w in ws1]
+
+    t = 0
+    while t < 30:
+        ws2 = [w.split()[0:3] for w in get_output("wmctrl -lp").splitlines() if w not in ws1]
         procs = [[(p, w[0]) for p in get_output("ps -e ww").splitlines() if app in p and w[2] in p] for w in ws2]
         if len(procs) > 0:
             sleep(0.5)
@@ -106,39 +116,45 @@ def open_appwindow(app, x, y, w, h):
             reposition_window(w_id, x, y, w, h)
             break
         sleep(0.5)
+        t += 1
+
 
 def reposition_window(w_id, x, y, w, h) -> None:
+    """Move and resize windows using wmctrl."""
     v_offset = 35
     cmd1 = f"wmctrl -ir {w_id} -b remove,maximized_horz"
     cmd2 = f"wmctrl -ir {w_id} -b remove,maximized_vert"
     cmd3 = f"wmctrl -ir {w_id} -e 0,{x},{int(y) - v_offset},{w},{h}"
-    for cmd in [cmd1, cmd2, cmd3]:   
+    for cmd in [cmd1, cmd2, cmd3]:
         call(["/bin/bash", "-c", cmd])
 
+
 def run_remembered(opts: argparse.Namespace) -> None:
+    """Open and/or resize app windows based on the saved list."""
     res = get_vpdata()
     running = read_window_ids()
     if WFILE.is_file():
-        lines = [l.split() for l in open(WFILE).read().splitlines()]
-        for l in lines:          
-            l[1] = str(int(l[1]) - res[0]); l[2] = str(int(l[2]) - res[1] - 24)
-            apps = [a[0] for a in running]
-            if l[0] in apps :
-                idx = apps.index(l[0])
-                if not opts.dry_run:
-                    reposition_window(running[idx][1], l[1], l[2], l[3], l[4])
-                running.pop(idx)
-            elif not opts.dry_run:
-                open_appwindow(l[0], l[1], l[2], l[3], l[4])
+        with open(WFILE, "rt") as inp:
+            while this_line := inp.read():
+                f = this_line.split()
+                f[1] = str(int(f[1]) - res[0])
+                f[2] = str(int(f[2]) - res[1] - 24)
+                apps = [a[0] for a in running]
+                if f[0] in apps:
+                    idx = apps.index(f[0])
+                    if not opts.dry_run:
+                        reposition_window(running[idx][1], f[1], f[2], f[3], f[4])
+                    running.pop(idx)
+                elif not opts.dry_run:
+                    open_appwindow(f[0], f[1], f[2], f[3], f[4])
     else:
         logger.critical(f"File not found: {WFILE!r}")
+
 
 def main(args: Optional[list] = None) -> int:
     """This function collects arguments and configuration, and starts the crawling process."""
     # Run frosch's hook.
     hook()
-    # Run colorama's init.
-    init()
     # Set up logging.
     logger.level(DEBUG)
 
