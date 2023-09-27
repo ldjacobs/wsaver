@@ -1,0 +1,77 @@
+minimum_pre_commit_version: 2.13.0
+default_stages: [commit, push]
+exclude: '^$'
+default_language_version:
+  python: python3.10
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.4.0
+    hooks:
+    - id: trailing-whitespace
+    - id: end-of-file-fixer
+    - id: check-docstring-first
+    - id: check-merge-conflict
+    - id: check-yaml
+    - id: check-json
+    - id: pretty-format-json
+      args: [--autofix]
+    - id: debug-statements
+    - id: name-tests-test
+    - id: requirements-txt-fixer
+    - id: detect-private-key
+  - repo: https://github.com/zricethezav/gitleaks
+    rev: v8.17.0
+    hooks:
+      - id: gitleaks
+        exclude: tests/
+  - repo: https://github.com/psf/black
+    rev: 23.3.0
+    hooks:
+      - id: black
+        language_version: python3.10
+        args: [--line-length=120]
+  - repo: https://github.com/charliermarsh/ruff-pre-commit
+    # Should eventually add ARG, BLE, and EM to the --select list.
+    rev: 'v0.0.276'
+    hooks:
+      - id: ruff
+        args:
+          - "--line-length=120"
+          - "--select=A,B,C,E,F,N,S,W,B9,C4,ISC,PT,SIM"
+          - "--ignore=E501,C408,PT009,S106,S113,N802,N803,N806,N817,N818,N999,S308,C901,S311,S603,S608,S101,PT006,SIM102,SIM108"
+#  - repo: https://github.com/pre-commit/mirrors-mypy
+#    rev: v0.991
+#    hooks:
+#    - id: mypy
+#      additional_dependencies: [types-all]
+#      # args: [--show-error-codes]
+  - repo: https://github.com/pycqa/isort
+    rev: 5.12.0
+    hooks:
+      - id: isort
+        args: ["--profile", "black"]
+        name: isort (python)
+      - id: isort
+        args: ["--profile", "black"]
+        name: isort (cython)
+        types: [cython]
+      - id: isort
+        args: ["--profile", "black"]
+        name: isort (pyi)
+        types: [pyi]
+  - repo: https://github.com/PyCQA/bandit
+    rev: 1.7.5
+    hooks:
+      - id: bandit
+        args: ["-x", "tests"]
+        stages: [push]
+  - repo: https://github.com/econchick/interrogate
+    rev: 1.5.0
+    hooks:
+      - id: interrogate
+        args: [-vv, --fail-under=80, --exclude=tests, --exclude=migrations]
+        exclude: migrations/
+  - repo: https://github.com/markdownlint/markdownlint
+    rev: v0.12.0
+    hooks:
+      - id: markdownlint

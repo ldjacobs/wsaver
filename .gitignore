@@ -1,0 +1,22 @@
+# PyCharm droppings
+.idea/
+
+# Python droppings
+__pycache__/
+
+# mypy droppings
+.mypy_cache/
+
+# pyenv droppings
+.python-version
+
+# poetry droppings
+dist/
+
+# pyre droppings
+.pyre/
+.pyre_configuration
+
+# Our real config files
+.pget
+.gn
