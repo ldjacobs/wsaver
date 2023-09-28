@@ -20,19 +20,19 @@ repos:
     - id: requirements-txt-fixer
     - id: detect-private-key
   - repo: https://github.com/zricethezav/gitleaks
-    rev: v8.17.0
+    rev: v8.18.0
     hooks:
       - id: gitleaks
         exclude: tests/
   - repo: https://github.com/psf/black
-    rev: 23.3.0
+    rev: 23.9.1
     hooks:
       - id: black
         language_version: python3.10
         args: [--line-length=120]
   - repo: https://github.com/charliermarsh/ruff-pre-commit
     # Should eventually add ARG, BLE, and EM to the --select list.
-    rev: 'v0.0.276'
+    rev: 'v0.0.291'
     hooks:
       - id: ruff
         args:

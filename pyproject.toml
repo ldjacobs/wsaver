@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "wsaver"
-version = "1.0.0"
+version = "1.0.1"
 description = "Tool to save and restore window positions on a Linux desktop"
 authors = ["Lance Jacobs <lance@ljacobs.net>"]
 readme = "README.md"
@@ -9,18 +9,18 @@ readme = "README.md"
 python = "^3.11"
 colorama = "^0.4.6"
 frosch = "^0.1.9"
-loguru = "^0.7.2"
 
-[tool.poetry.dev-dependencies]
+[tool.poetry.scripts]
+wsaver = "wsaver.wsaver:main"
+
+[tool.poetry.group.dev.dependencies]
+pipdeptree = "^2.13.0"
 pre-commit = "^2.20.0"
 pytest = "^6.2.5"
 black = "^22.6.0"
 isort = "^5.10.1"
 isort-black-compat = "^4.3.211"
 mypy = "^0.971"
-
-[tool.poetry.scripts]
-wsaver = "wsaver.wsaver:main"
 
 [tool.coverage.paths]
 source = ["pget"]

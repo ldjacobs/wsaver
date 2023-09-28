@@ -10,12 +10,20 @@ from subprocess import Popen, call, check_output
 from time import sleep
 from typing import Optional
 
+from colorama import Fore, Style, init
 from frosch import hook
-from loguru import logger
 
-VERSION = "1.0.0"
+VERSION = "1.0.1"
 WFILE = Path(os.environ["HOME"], ".windowlist")
-DEBUG = "DEBUG"
+DEBUG = 3
+WIN_TITLE_HEIGHT = 24
+lpg = namedtuple("lpg", ["win_id", "desktop_id", "pid", "x", "y", "width", "height", "uname", "title"])
+
+
+def dprint(msg: str, lvl: int = 0) -> None:
+    """This function sends its message to STDERR only if DEBUG is set to a value greater than or equal to lvl."""
+    if lvl <= DEBUG:
+        print("%s%s%s" % (Fore.RED, msg, Style.RESET_ALL), file=sys.stderr)
 
 
 def get_output(command: str) -> str:
@@ -39,7 +47,7 @@ def get_res() -> tuple:
     xrandr = get_output("xrandr")
     # Find X and Y from "current XXXX x YYYY," in this output
     res = re.search(r"current (\d+) x (\d+),", xrandr, re.I).groups()
-    logger.info(f"{res=}")
+    dprint(f"{res=}", 2)
     return res
 
 
@@ -48,7 +56,7 @@ def get_vpdata() -> list:
     Seems to always be [0, 0]?"""
     vp_data = get_output("wmctrl -d").splitlines()
     curr_vpdata = [int(n) for v in vp_data for n in v.split()[5].split(",") if n != "N/A"]
-    logger.info(f"{curr_vpdata=}")
+    dprint(f"{curr_vpdata=}", 2)
     return curr_vpdata
 
 
@@ -59,10 +67,11 @@ def pid_name(pid: int) -> str:
 
 def read_windows(opts: argparse.Namespace) -> None:
     """Get the currently-open windows for output to file or STDOUT"""
-    lpg = namedtuple("lpg", ["win_id", "desktop_id", "pid", "x", "y", "width", "height", "uname", "title"])
     w_list = [lpg._make(w.split(maxsplit=8)) for w in get_output("wmctrl -lpG").splitlines()]
-    relevant = [[w[2], [int(n) for n in w[3:7]]] for w in w_list if check_window(w.win_id)]
-    logger.warning(f"w_list={pformat(w_list)}")
+    relevant = [
+        [w.pid, [int(n) for n in [w.desktop_id, w.x, w.y, w.width, w.height]]] for w in w_list if check_window(w.win_id)
+    ]
+    dprint(f"w_list={pformat(w_list)}", 1)
     for i, r in enumerate(relevant):
         relevant[i] = pid_name(r[0]) + " " + str((" ").join([str(n) for n in r[1]]))
     if opts.no_file:
@@ -76,19 +85,18 @@ def read_windows(opts: argparse.Namespace) -> None:
 
 def read_window_ids() -> list:
     """Get the currently-open windows for comparison to the saved list."""
-    lpg = namedtuple("lpg", ["win_id", "desktop_id", "pid", "x", "y", "width", "height", "uname", "title"])
     w_list = [lpg._make(w.split(maxsplit=8)) for w in get_output("wmctrl -lpG").splitlines()]
-    logger.warning(f"w_list={pformat(w_list)}")
+    dprint(f"w_list={pformat(w_list)}", 1)
     relevant = [[w.pid, w.win_id] for w in w_list if check_window(w.win_id)]
-    logger.warning(f"{relevant=}")
+    dprint(f"{relevant=}", 2)
     # Replace PID with process name in the relevant list.
     for i, r in enumerate(relevant):
         relevant[i][0] = pid_name(r[0])
-    logger.warning(f"{relevant=}")
+    dprint(f"{relevant=}", 1)
     return relevant
 
 
-def open_appwindow(app, x, y, w, h):
+def open_appwindow(app, dtop, x, y, w, h):
     """Open apps from the saved list that are not currently running."""
     ws1 = get_output("wmctrl -lp")
     # fix command for certain apps that open in new tab by default
@@ -113,50 +121,54 @@ def open_appwindow(app, x, y, w, h):
         if len(procs) > 0:
             sleep(0.5)
             w_id = procs[0][0][1]
-            reposition_window(w_id, x, y, w, h)
+            reposition_window(w_id, dtop, x, y, w, h)
             break
         sleep(0.5)
         t += 1
 
 
-def reposition_window(w_id, x, y, w, h) -> None:
+def reposition_window(w_id, dtop, x, y, w, h) -> None:
     """Move and resize windows using wmctrl."""
     v_offset = 35
-    cmd1 = f"wmctrl -ir {w_id} -b remove,maximized_horz"
-    cmd2 = f"wmctrl -ir {w_id} -b remove,maximized_vert"
-    cmd3 = f"wmctrl -ir {w_id} -e 0,{x},{int(y) - v_offset},{w},{h}"
-    for cmd in [cmd1, cmd2, cmd3]:
+    cmds = []
+    cmds.append(f"wmctrl -ir {w_id} -b remove,maximized_horz")
+    cmds.append(f"wmctrl -ir {w_id} -b remove,maximized_vert")
+    cmds.append(f"wmctrl -ir {w_id} -t {dtop}")
+    cmds.append(f"wmctrl -ir {w_id} -e 0,{x},{int(y) - v_offset},{w},{h}")
+    for cmd in cmds:
         call(["/bin/bash", "-c", cmd])
 
 
 def run_remembered(opts: argparse.Namespace) -> None:
     """Open and/or resize app windows based on the saved list."""
+    wlist = namedtuple("wlist", ["app", "dtop", "x", "y", "w", "h"])
     res = get_vpdata()
     running = read_window_ids()
+    dprint(f"{running=}", 1)
     if WFILE.is_file():
         with open(WFILE, "rt") as inp:
-            while this_line := inp.read():
-                f = this_line.split()
-                f[1] = str(int(f[1]) - res[0])
-                f[2] = str(int(f[2]) - res[1] - 24)
+            while this_line := inp.readline():
+                f = wlist._make(this_line.split())
+                x = str(int(f.x) - res[0])
+                y = str(int(f.y) - res[1] - WIN_TITLE_HEIGHT)
                 apps = [a[0] for a in running]
-                if f[0] in apps:
-                    idx = apps.index(f[0])
+                if f.app in apps:
+                    idx = apps.index(f.app)
                     if not opts.dry_run:
-                        reposition_window(running[idx][1], f[1], f[2], f[3], f[4])
+                        reposition_window(running[idx][1], f.dtop, x, y, f.w, f.h)
                     running.pop(idx)
                 elif not opts.dry_run:
-                    open_appwindow(f[0], f[1], f[2], f[3], f[4])
+                    open_appwindow(f.app, f.dtop, x, y, f.w, f.h)
     else:
-        logger.critical(f"File not found: {WFILE!r}")
+        dprint(f"File not found: {WFILE!r}")
 
 
 def main(args: Optional[list] = None) -> int:
     """This function collects arguments and configuration, and starts the crawling process."""
     # Run frosch's hook.
     hook()
-    # Set up logging.
-    logger.level(DEBUG)
+    # Run colorama's init.
+    init()
 
     if args is None:
         args = sys.argv[1:]
@@ -210,6 +222,7 @@ def main(args: Optional[list] = None) -> int:
         # goto_workspace(0)
         # sleep(1)
         run_remembered(opts)
+    return 0
 
 
 if __name__ == "__main__":
