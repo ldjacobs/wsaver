@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "wsaver"
-version = "1.0.1"
+version = "1.0.2"
 description = "Tool to save and restore window positions on a Linux desktop"
 authors = ["Lance Jacobs <lance@ljacobs.net>"]
 readme = "README.md"

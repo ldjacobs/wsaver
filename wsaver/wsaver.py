@@ -8,22 +8,27 @@ from pathlib import Path
 from pprint import pformat
 from subprocess import Popen, call, check_output
 from time import sleep
-from typing import Optional
+from typing import Any, Optional
 
 from colorama import Fore, Style, init
 from frosch import hook
 
-VERSION = "1.0.1"
+# FIXME!  For multiple windows like terminals, need a way to try to match up window IDs with PIDs,
+#  so that windows won't get scrambled around when they are repositioned/resized.
+VERSION = "1.0.2"
 WFILE = Path(os.environ["HOME"], ".windowlist")
-DEBUG = 3
+DEBUG = 1
 WIN_TITLE_HEIGHT = 24
-lpg = namedtuple("lpg", ["win_id", "desktop_id", "pid", "x", "y", "width", "height", "uname", "title"])
+# A namedtuple to describe the output of "wmctrl -lpG".
+lpg = namedtuple("lpg", ["win_id", "dtop", "pid", "x", "y", "width", "height", "uname", "title"])
+# A namedtuple to describe the contents of the .windowlist file.
+wlist = namedtuple("wlist", ["app", "pid", "dtop", "x", "y", "w", "h"])
 
 
 def dprint(msg: str, lvl: int = 0) -> None:
     """This function sends its message to STDERR only if DEBUG is set to a value greater than or equal to lvl."""
     if lvl <= DEBUG:
-        print("%s%s%s" % (Fore.RED, msg, Style.RESET_ALL), file=sys.stderr)
+        print(f"{Fore.RED}{msg}\n{Fore.YELLOW}======={Style.RESET_ALL}", file=sys.stderr)
 
 
 def get_output(command: str) -> str:
@@ -42,18 +47,22 @@ def check_window(w_id: str) -> bool:
     return any(t in w_type for t in true_types)
 
 
-def get_res() -> tuple:
+def get_res() -> Optional[tuple]:
     """Gets the current resolution from xrandr.  Never called now?"""
     xrandr = get_output("xrandr")
+    res = None
     # Find X and Y from "current XXXX x YYYY," in this output
-    res = re.search(r"current (\d+) x (\d+),", xrandr, re.I).groups()
+    if found := re.search(r"current (\d+) x (\d+),", xrandr, re.I):
+        res = found.groups()
     dprint(f"{res=}", 2)
     return res
 
 
 def get_vpdata() -> list:
     """Get "workspace correction" (vector?) data from wmctrl.
-    Seems to always be [0, 0]?"""
+    Seems to always be [0, 0]?
+    According to "man wmctrl", this is the "viewport position",
+    so it seems unlikely to be anything other than [0, 0]."""
     vp_data = get_output("wmctrl -d").splitlines()
     curr_vpdata = [int(n) for v in vp_data for n in v.split()[5].split(",") if n != "N/A"]
     dprint(f"{curr_vpdata=}", 2)
@@ -62,41 +71,47 @@ def get_vpdata() -> list:
 
 def pid_name(pid: int) -> str:
     """Return the process name for the given pid."""
-    return check_output(["/usr/bin/ps", "-q", pid, "-o", "comm="]).decode("utf-8").strip()
+    return check_output(["/usr/bin/ps", "-q", str(pid), "-o", "comm="]).decode("utf-8").strip()
+
+
+def format_relevant(r: list) -> str:
+    """Formats one entry from the weird "relevant" list for nice output."""
+    # This is app_name, PID, desktop_num, x, y, w, h.
+    return f"{r[0]:<15} {r[1]:>8} {r[2][0]:>2} {r[2][1]:>5} {r[2][2]:>5} {r[2][3]:>5} {r[2][4]:>5}"
 
 
 def read_windows(opts: argparse.Namespace) -> None:
-    """Get the currently-open windows for output to file or STDOUT"""
+    """Get the currently-open windows for output to file or STDOUT."""
     w_list = [lpg._make(w.split(maxsplit=8)) for w in get_output("wmctrl -lpG").splitlines()]
-    relevant = [
-        [w.pid, [int(n) for n in [w.desktop_id, w.x, w.y, w.width, w.height]]] for w in w_list if check_window(w.win_id)
-    ]
     dprint(f"w_list={pformat(w_list)}", 1)
-    for i, r in enumerate(relevant):
-        relevant[i] = pid_name(r[0]) + " " + str((" ").join([str(n) for n in r[1]]))
+    relevant = [
+        [pid_name(w.pid), w.pid, [int(n) for n in [w.dtop, w.x, w.y, w.width, w.height]]]
+        for w in w_list
+        if check_window(w.win_id)
+    ]
+    dprint(f"relevant={pformat(relevant)}", 1)
     if opts.no_file:
         for r in relevant:
-            print(r)
+            print(format_relevant(r))
     else:
         with open(WFILE, "wt") as out:
             for r in relevant:
-                out.write(f"{r}\n")
+                out.write(f"{format_relevant(r)}\n")
 
 
-def read_window_ids() -> list:
+def read_window_ids() -> dict[Any, Any]:
     """Get the currently-open windows for comparison to the saved list."""
     w_list = [lpg._make(w.split(maxsplit=8)) for w in get_output("wmctrl -lpG").splitlines()]
     dprint(f"w_list={pformat(w_list)}", 1)
-    relevant = [[w.pid, w.win_id] for w in w_list if check_window(w.win_id)]
-    dprint(f"{relevant=}", 2)
-    # Replace PID with process name in the relevant list.
-    for i, r in enumerate(relevant):
-        relevant[i][0] = pid_name(r[0])
-    dprint(f"{relevant=}", 1)
-    return relevant
+    running: dict = {pid_name(w.pid): [] for w in w_list if check_window(w.win_id)}
+    for w in sorted(w_list, key=lambda p: int(p.pid)):
+        if check_window(w.win_id):
+            running[pid_name(w.pid)].append([w.pid, w.win_id])
+    dprint(f"{running=}", 1)
+    return running
 
 
-def open_appwindow(app, dtop, x, y, w, h):
+def open_appwindow(app, dtop, x, y, w, h):  # noqa: PLR0913
     """Open apps from the saved list that are not currently running."""
     ws1 = get_output("wmctrl -lp")
     # fix command for certain apps that open in new tab by default
@@ -114,8 +129,9 @@ def open_appwindow(app, dtop, x, y, w, h):
     # fix exception for Chrome (command = google-chrome-stable, but processname = chrome)
     app = "chrome" if "chrome" in app else app
 
+    MAX_TRIES = 30
     t = 0
-    while t < 30:
+    while t < MAX_TRIES:
         ws2 = [w.split()[0:3] for w in get_output("wmctrl -lp").splitlines() if w not in ws1]
         procs = [[(p, w[0]) for p in get_output("ps -e ww").splitlines() if app in p and w[2] in p] for w in ws2]
         if len(procs) > 0:
@@ -127,7 +143,7 @@ def open_appwindow(app, dtop, x, y, w, h):
         t += 1
 
 
-def reposition_window(w_id, dtop, x, y, w, h) -> None:
+def reposition_window(w_id, dtop, x, y, w, h) -> None:  # noqa: PLR0913
     """Move and resize windows using wmctrl."""
     v_offset = 35
     cmds = []
@@ -141,7 +157,6 @@ def reposition_window(w_id, dtop, x, y, w, h) -> None:
 
 def run_remembered(opts: argparse.Namespace) -> None:
     """Open and/or resize app windows based on the saved list."""
-    wlist = namedtuple("wlist", ["app", "dtop", "x", "y", "w", "h"])
     res = get_vpdata()
     running = read_window_ids()
     dprint(f"{running=}", 1)

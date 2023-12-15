@@ -5,7 +5,7 @@ default_language_version:
   python: python3.10
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v4.4.0
+    rev: v4.5.0
     hooks:
     - id: trailing-whitespace
     - id: end-of-file-fixer
@@ -25,26 +25,26 @@ repos:
       - id: gitleaks
         exclude: tests/
   - repo: https://github.com/psf/black
-    rev: 23.9.1
+    rev: 23.10.0
     hooks:
       - id: black
         language_version: python3.10
         args: [--line-length=120]
   - repo: https://github.com/charliermarsh/ruff-pre-commit
     # Should eventually add ARG, BLE, and EM to the --select list.
-    rev: 'v0.0.291'
+    rev: 'v0.1.0'
     hooks:
       - id: ruff
         args:
           - "--line-length=120"
-          - "--select=A,B,C,E,F,N,S,W,B9,C4,ISC,PT,SIM"
+          - "--select=A,B,C,E,F,N,S,W,B9,C4,ISC,PL,PT,SIM"
           - "--ignore=E501,C408,PT009,S106,S113,N802,N803,N806,N817,N818,N999,S308,C901,S311,S603,S608,S101,PT006,SIM102,SIM108"
-#  - repo: https://github.com/pre-commit/mirrors-mypy
-#    rev: v0.991
-#    hooks:
-#    - id: mypy
-#      additional_dependencies: [types-all]
-#      # args: [--show-error-codes]
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.6.1
+    hooks:
+    - id: mypy
+      additional_dependencies: [types-all]
+      # args: [--show-error-codes]
   - repo: https://github.com/pycqa/isort
     rev: 5.12.0
     hooks:
